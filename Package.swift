@@ -17,8 +17,16 @@ let package = Package(
     .executable(name: "google-drive-gateway-reader", targets: ["GoogleDriveGatewayReader"]),
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0")
+  ],
   targets: [
-    .target(name: "AppCore"),
+    .target(
+      name: "AppCore",
+      dependencies: [
+        .product(name: "Crypto", package: "swift-crypto")
+      ]
+    ),
     .executableTarget(
       name: "AppCLI",
       dependencies: ["AppCore"]

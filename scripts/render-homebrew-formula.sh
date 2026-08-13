@@ -56,7 +56,11 @@ main() {
   version="$1"
   output="${2:-$repo_root/Formula/$artifact_name.rb}"
   release_dir="${RELEASE_DIR:-$repo_root/dist/homebrew}"
-  release_base_url="${RELEASE_BASE_URL:-https://github.com/tacogips/document-gateway/releases/download/v$version}"
+  if [[ -n "${RELEASE_BASE_URL:-}" ]]; then
+    release_base_url="$RELEASE_BASE_URL"
+  else
+    release_base_url='https://github.com/tacogips/document-gateway/releases/download/v#{version}'
+  fi
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -67,6 +71,7 @@ main() {
 class DocumentGateway < Formula
   desc "Least-privilege Google Docs, Sheets, and Drive CLI gateways"
   homepage "https://github.com/tacogips/document-gateway"
+  version "$version"
   license "MIT"
 
   livecheck do
@@ -76,10 +81,10 @@ class DocumentGateway < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "$release_base_url/$artifact_name-$version-darwin-arm64.tar.gz"
+      url "$release_base_url/$artifact_name-#{version}-darwin-arm64.tar.gz"
       sha256 "$darwin_arm64_sha"
     else
-      url "$release_base_url/$artifact_name-$version-darwin-x64.tar.gz"
+      url "$release_base_url/$artifact_name-#{version}-darwin-x64.tar.gz"
       sha256 "$darwin_x64_sha"
     end
   end
