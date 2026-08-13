@@ -1,4 +1,4 @@
-import Crypto
+import CryptoKit
 import Foundation
 
 public struct GatewayCredentialProfile: Sendable, Equatable {
