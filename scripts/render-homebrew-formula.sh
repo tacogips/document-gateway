@@ -67,7 +67,6 @@ main() {
 class DocumentGateway < Formula
   desc "Least-privilege Google Docs, Sheets, and Drive CLI gateways"
   homepage "https://github.com/tacogips/document-gateway"
-  version "$version"
   license "MIT"
 
   livecheck do
