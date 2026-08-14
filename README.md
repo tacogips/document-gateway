@@ -113,6 +113,38 @@ arbitrary pre-existing files. All successful results and errors are structured
 JSON; provider response fields are preserved rather than narrowed to an
 incomplete local model.
 
+### Readable write inputs
+
+Common writes accept bounded flags so callers do not need to hand-author a
+provider body. The advanced raw body paths remain available where shown.
+
+```bash
+# Docs: use raw JSON/file only for rich or index-sensitive changes.
+swift run google-docs-gateway-writer document create --title 'Project notes'
+swift run google-docs-gateway-writer document batch-update --document-id ID --text $'First line\nSecond line'
+
+# Sheets: --values is one comma-split row; it has no quote or escape grammar.
+swift run google-sheet-gateway-writer values update --spreadsheet-id ID --range 'Sheet1!A1' --values 'one,two,'
+swift run google-sheet-gateway-writer values append --spreadsheet-id ID --range 'Sheet1!A1' --json-values '[1,true,null]'
+swift run google-sheet-gateway-writer values update --spreadsheet-id ID --range 'Sheet1!A1' --input-file value-range.json
+
+# Drive: metadata comes from the path unless an explicit bounded override is needed.
+swift run google-drive-gateway-writer folders create --name Reports --parent-id PARENT_ID
+swift run google-drive-gateway-writer files upload --input report.csv --max-bytes 1048576
+swift run google-drive-gateway-writer files upload --input report.csv --max-bytes 1048576 --name export.csv --mime-type text/csv
+```
+
+`--json-values` accepts one JSON row or multiple rows. Its cells may be
+strings, finite numbers, booleans, or `null`; use it for commas, typed values,
+or multiple rows. `--value-input-option` still defaults to `RAW`; choose
+`USER_ENTERED` explicitly to enable Sheets formula interpretation. Drive MIME
+types are resolved from an explicit valid media type, otherwise a
+case-insensitive extension mapping, and finally `application/octet-stream`.
+Drive never sniffs file bytes.
+
+For a direct option value that begins with `--`, use the unambiguous
+`--option=value` form, such as `--text=--heading` or `--values=--pending`.
+
 ## Development
 
 ```bash

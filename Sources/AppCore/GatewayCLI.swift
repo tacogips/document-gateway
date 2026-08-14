@@ -43,7 +43,7 @@ public struct GatewayCommandRunner: Sendable {
       let plan = try GatewayRequestBuilder.plan(role: role, operation: command, options: parsed.options)
       let body = try GatewayInputValidator.body(for: role, command: command, options: parsed.options)
       if parsed.options["dry-run"] != nil {
-        return success(dryRunPayload(for: plan, options: parsed.options))
+        return success(dryRunPayload(for: plan, containsBodyValues: body != nil))
       }
       let token = try authorizer.accessToken(for: role)
       if role.service == .drive, [
@@ -94,7 +94,20 @@ public struct GatewayCommandRunner: Sendable {
 
   private var usage: String {
     let common = "config validate | auth login --credential ID | auth status --credential ID | auth revoke --credential ID --confirm-credential ID | doctor"
-    return "Usage: \(executableName) <command> [options]\nRole: \(role.accessMode.rawValue); exact scope: \(role.scope)\nCommands: \(allowedCommands.sorted().joined(separator: ", "))\nCommon: \(common)"
+    let readable = readableUsage.map { "\nReadable writes: \($0)" } ?? ""
+    return "Usage: \(executableName) <command> [options]\nRole: \(role.accessMode.rawValue); exact scope: \(role.scope)\nCommands: \(allowedCommands.sorted().joined(separator: ", "))\(readable)\nCommon: \(common)"
+  }
+
+  private var readableUsage: String? {
+    guard role.accessMode == .write else { return nil }
+    switch role.service {
+    case .docs:
+      return "document create --title TITLE; document batch-update --document-id ID --text TEXT; use --json or --json-file for advanced bodies"
+    case .sheets:
+      return "values append|update --spreadsheet-id ID --range RANGE --values a,b or --json-values '[1,true]' [--major-dimension ROWS|COLUMNS]; use --input-file for raw bodies"
+    case .drive:
+      return "folders create --name NAME [--parent-id ID]; files upload --input PATH --max-bytes N [--name NAME --parent-id ID --mime-type TYPE]"
+    }
   }
 
   private var executableName: String {
@@ -106,8 +119,8 @@ public struct GatewayCommandRunner: Sendable {
   private func validate(command: String, options: [String: [String]]) throws {
     let allowedOptions: [String: Set<String>] = [
       "document get": ["document-id", "include-tabs-content", "suggestions-view-mode", "dry-run"],
-      "document create": ["json", "json-file", "dry-run"],
-      "document batch-update": ["document-id", "json", "json-file", "dry-run"],
+      "document create": ["title", "json", "json-file", "dry-run"],
+      "document batch-update": ["document-id", "text", "json", "json-file", "dry-run"],
       "spreadsheet get": ["spreadsheet-id", "dry-run"],
       "spreadsheet get-by-data-filter": ["spreadsheet-id", "input-file", "dry-run"],
       "spreadsheet create": ["title", "dry-run"],
@@ -118,8 +131,8 @@ public struct GatewayCommandRunner: Sendable {
       "values batch-get-by-data-filter": ["spreadsheet-id", "input-file", "dry-run"],
       "developer-metadata get": ["spreadsheet-id", "metadata-id", "dry-run"],
       "developer-metadata search": ["spreadsheet-id", "input-file", "dry-run"],
-      "values append": ["spreadsheet-id", "range", "input-file", "value-input-option", "dry-run"],
-      "values update": ["spreadsheet-id", "range", "input-file", "value-input-option", "dry-run"],
+      "values append": ["spreadsheet-id", "range", "values", "json-values", "input-file", "major-dimension", "value-input-option", "dry-run"],
+      "values update": ["spreadsheet-id", "range", "values", "json-values", "input-file", "major-dimension", "value-input-option", "dry-run"],
       "values clear": ["spreadsheet-id", "range", "confirm-range", "dry-run"],
       "values batch-update": ["spreadsheet-id", "input-file", "value-input-option", "dry-run"],
       "values batch-clear": ["spreadsheet-id", "input-file", "confirm-clear", "dry-run"],
@@ -143,8 +156,8 @@ public struct GatewayCommandRunner: Sendable {
       "revisions list": ["file-id", "page-size", "page-token", "page-all", "max-pages", "dry-run"],
       "revisions get": ["file-id", "revision-id", "dry-run"],
       "revisions download": ["file-id", "revision-id", "output", "max-bytes", "overwrite", "dry-run"],
-      "folders create": ["name", "dry-run"],
-      "files upload": ["input", "max-bytes", "dry-run"],
+      "folders create": ["name", "parent-id", "dry-run"],
+      "files upload": ["input", "max-bytes", "name", "parent-id", "mime-type", "dry-run"],
       "files copy": ["file-id", "confirm-file-id", "name", "parent-id", "dry-run"],
       "files replace-content": [
         "file-id", "confirm-file-id", "expected-modified-time", "input", "max-bytes", "dry-run"
@@ -187,9 +200,11 @@ public struct GatewayCommandRunner: Sendable {
     if command.contains("document") && command != "document create" {
       try require("document-id", options: options)
     }
-    if command == "document create" || command == "document batch-update" {
-      let sources = [options["json"] != nil, options["json-file"] != nil].filter { $0 }.count
-      guard sources == 1 else { throw GatewayError.invalidArgument("Specify exactly one of --json or --json-file") }
+    if command == "document create" {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["title", "json", "json-file"])
+    }
+    if command == "document batch-update" {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["text", "json", "json-file"])
     }
   }
 
@@ -198,10 +213,19 @@ public struct GatewayCommandRunner: Sendable {
     if command != "spreadsheet create" { try require("spreadsheet-id", options: options) }
     let bodyCommands = [
       "spreadsheet get-by-data-filter", "spreadsheet batch-update", "values batch-get-by-data-filter",
-      "developer-metadata search", "values append", "values update", "values batch-update",
+      "developer-metadata search", "values batch-update",
       "values batch-clear", "values batch-clear-by-data-filter", "values batch-update-by-data-filter"
     ]
     if bodyCommands.contains(command) { try require("input-file", options: options) }
+    if ["values append", "values update"].contains(command) {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["values", "json-values", "input-file"])
+      if options["input-file"] != nil, options["major-dimension"] != nil {
+        throw GatewayError.invalidArgument("--major-dimension is only valid with --values or --json-values")
+      }
+      if let dimension = options["major-dimension"]?.last, !["ROWS", "COLUMNS"].contains(dimension) {
+        throw GatewayError.invalidArgument("--major-dimension must be ROWS or COLUMNS")
+      }
+    }
     if ["values get", "values append", "values update", "values clear"].contains(command) {
       try require("range", options: options)
     }
@@ -245,6 +269,7 @@ public struct GatewayCommandRunner: Sendable {
       try require("input", options: options)
       try require("max-bytes", options: options)
     }
+    if command == "files upload" { try GatewayReadableInput.validateDriveUploadMetadata(options) }
     if let maximum = options["max-bytes"]?.last.flatMap(Int.init), maximum < 0 {
       throw GatewayError.invalidArgument("--max-bytes must be non-negative")
     }
@@ -355,12 +380,12 @@ public struct GatewayCommandRunner: Sendable {
     }
   }
 
-  private func dryRunPayload(for plan: GatewayRequestPlan, options: [String: [String]]) -> [String: Any] {
-    [
+  private func dryRunPayload(for plan: GatewayRequestPlan, containsBodyValues: Bool) -> [String: Any] {
+    return [
       "operation": plan.operation,
       "dryRun": true,
       "request": ["method": plan.method, "path": plan.path, "query": plan.query.map { ["name": $0.0, "value": $0.1] }],
-      "meta": ["tokenLoaded": false, "transportCalled": false, "bodyValuesRedacted": options["input-file"] != nil || options["json"] != nil || options["json-file"] != nil]
+      "meta": ["tokenLoaded": false, "transportCalled": false, "bodyValuesRedacted": containsBodyValues]
     ]
   }
 
@@ -406,15 +431,18 @@ public struct GatewayCommandRunner: Sendable {
   }
 
   private func driveUploadResult(operation: String, plan: GatewayRequestPlan, input: Data, token: String, options: [String: [String]]) throws -> GatewayCommandResult {
-    let fileName = URL(fileURLWithPath: options["input"]?.last ?? "upload").lastPathComponent
-    let metadata = operation == "files upload" ? try JSONSerialization.data(withJSONObject: ["name": fileName]) : Data("{}".utf8)
+    let metadataObject = operation == "files upload" ? try GatewayReadableInput.driveUploadMetadata(options) : [:]
+    let mediaType = operation == "files upload"
+      ? (metadataObject["mimeType"] as? String ?? "application/octet-stream")
+      : "application/octet-stream"
+    let metadata = try JSONSerialization.data(withJSONObject: metadataObject, options: [.sortedKeys])
     let initial = try transport.send(
       url: try providerURL(for: plan),
       method: plan.method,
       headers: [
         "Authorization": "Bearer \(token)",
         "Content-Type": "application/json",
-        "X-Upload-Content-Type": "application/octet-stream",
+        "X-Upload-Content-Type": mediaType,
         "X-Upload-Content-Length": String(input.count)
       ],
       body: metadata
@@ -430,7 +458,7 @@ public struct GatewayCommandRunner: Sendable {
         headers: [
           "Authorization": "Bearer \(token)",
           "Content-Length": "0",
-          "Content-Type": "application/octet-stream",
+          "Content-Type": mediaType,
           "Content-Range": "bytes */0"
         ],
         body: Data()
@@ -449,7 +477,7 @@ public struct GatewayCommandRunner: Sendable {
         headers: [
           "Authorization": "Bearer \(token)",
           "Content-Length": String(chunk.count),
-          "Content-Type": "application/octet-stream",
+          "Content-Type": mediaType,
           "Content-Range": "bytes \(offset)-\(end - 1)/\(input.count)"
         ],
         body: chunk
@@ -666,17 +694,26 @@ private struct ParsedArguments {
     while index < arguments.count {
       let option = arguments[index]
       guard option.hasPrefix("--") else { throw GatewayError.invalidArgument("Expected option, got \(option)") }
-      let key = String(option.dropFirst(2))
+      let optionText = String(option.dropFirst(2))
+      let keyValue = optionText.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+      let key = String(keyValue[0])
+      guard !key.isEmpty else { throw GatewayError.invalidArgument("Expected option name") }
       if [
         "dry-run", "overwrite", "page-all", "online", "acknowledge-broad-access", "confirm-clear",
         "keep-forever", "publish"
       ].contains(key) {
+        guard keyValue.count == 1 else { throw GatewayError.invalidArgument("--\(key) does not take a value") }
         values[key, default: []].append("true")
         index += 1
       } else {
-        guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else { throw GatewayError.invalidArgument("Missing value for \(option)") }
-        values[key, default: []].append(arguments[index + 1])
-        index += 2
+        if keyValue.count == 2 {
+          values[key, default: []].append(String(keyValue[1]))
+          index += 1
+        } else {
+          guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else { throw GatewayError.invalidArgument("Missing value for \(option)") }
+          values[key, default: []].append(arguments[index + 1])
+          index += 2
+        }
       }
     }
     options = values
