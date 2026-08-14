@@ -20,6 +20,7 @@ fi
 swift = "6.3.3"
 swiftlint = "latest"
 gitleaks = "latest"
+gcloud = "latest"
 
 [tasks.default]
 description = "Show available tasks"
