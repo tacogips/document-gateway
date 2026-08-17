@@ -54,9 +54,12 @@ The reusable Desktop OAuth client JSON from the sibling `mail-gateway` vault
 has been copied into these document-gateway-local keys. Gmail token values were
 not copied because Gmail grants do not satisfy any document-gateway role.
 
-Run each login through kinko. Login opens the browser and accepts the callback
-only on a temporary `127.0.0.1` listener; authorization codes and PKCE values
-are never accepted as command arguments.
+Run each login through kinko. Login opens the browser, acquires the Google OAuth
+token through PKCE, and accepts the callback only on a temporary `127.0.0.1`
+listener; authorization codes and PKCE values are never accepted as command
+arguments. To open the URL manually in a browser on the same Mac, add
+`--open-browser false`; the gateway prints the authorization URL to standard
+error while the loopback callback listener waits for completion.
 
 ```bash
 kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON -- \

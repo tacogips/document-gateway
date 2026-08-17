@@ -11,7 +11,7 @@ public struct GatewayLoopbackOAuth: Sendable {
     self.transport = transport
   }
 
-  public func login(timeout: TimeInterval = 180) throws -> GatewayTokenStore {
+  public func login(timeout: TimeInterval = 180, openBrowser: Bool = true) throws -> GatewayTokenStore {
     let callback = LoopbackCallback()
     let port = try callback.start(timeout: min(timeout, 10))
     defer { callback.cancel() }
@@ -25,7 +25,7 @@ public struct GatewayLoopbackOAuth: Sendable {
       state: state,
       verifier: verifier
     )
-    try Self.openBrowser(authorizationURL)
+    try GatewayAuthorizationPresenter.live.present(authorizationURL, openBrowser: openBrowser)
     let result = try callback.wait(timeout: timeout)
     guard result.state == state else { throw GatewayError.authenticationRequired }
     guard result.error == nil, let code = result.code, !code.isEmpty else {
@@ -43,10 +43,27 @@ public struct GatewayLoopbackOAuth: Sendable {
       .replacingOccurrences(of: "/", with: "_")
       .replacingOccurrences(of: "=", with: "")
   }
+}
 
-  private static func openBrowser(_ url: URL) throws {
-    guard NSWorkspace.shared.open(url) else { throw GatewayError.authenticationRequired }
+struct GatewayAuthorizationPresenter: Sendable {
+  let browserOpener: @Sendable (URL) -> Bool
+  let manualReporter: @Sendable (URL) -> Void
+
+  func present(_ url: URL, openBrowser: Bool) throws {
+    if openBrowser {
+      guard browserOpener(url) else { throw GatewayError.authenticationRequired }
+    } else {
+      manualReporter(url)
+    }
   }
+
+  static let live = GatewayAuthorizationPresenter(
+    browserOpener: { NSWorkspace.shared.open($0) },
+    manualReporter: { url in
+      let message = "Open this Google OAuth authorization URL to continue: \(url.absoluteString)\n"
+      FileHandle.standardError.write(Data(message.utf8))
+    }
+  )
 }
 
 private struct LoopbackResult: Sendable {

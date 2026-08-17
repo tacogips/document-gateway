@@ -93,7 +93,7 @@ public struct GatewayCommandRunner: Sendable {
   }
 
   private var usage: String {
-    let common = "config validate | auth login --credential ID | auth status --credential ID | auth revoke --credential ID --confirm-credential ID | doctor"
+    let common = "config validate | auth login --credential ID [--open-browser true|false] [--timeout-seconds N] | auth status --credential ID | auth revoke --credential ID --confirm-credential ID | doctor"
     let readable = readableUsage.map { "\nReadable writes: \($0)" } ?? ""
     return "Usage: \(executableName) <command> [options]\nRole: \(role.accessMode.rawValue); exact scope: \(role.scope)\nCommands: \(allowedCommands.sorted().joined(separator: ", "))\(readable)\nCommon: \(common)"
   }
@@ -635,9 +635,15 @@ public struct GatewayCommandRunner: Sendable {
     guard profile.tokenStoreJSON == nil else {
       throw GatewayError.invalidArgument("auth login cannot replace an environment-provided token store")
     }
+    let openBrowser: Bool
+    switch options["open-browser"]?.last?.lowercased() ?? "true" {
+    case "true": openBrowser = true
+    case "false": openBrowser = false
+    default: throw GatewayError.invalidArgument("--open-browser must be true or false")
+    }
     let timeout = options["timeout-seconds"]?.last.flatMap(TimeInterval.init) ?? 180
     guard timeout > 0, timeout <= 600 else { throw GatewayError.invalidArgument("--timeout-seconds must be between 1 and 600") }
-    let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout)
+    let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout, openBrowser: openBrowser)
     try GatewayTokenStoreFile.write(store, to: profile.tokenStoreURL)
     return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope])
   }

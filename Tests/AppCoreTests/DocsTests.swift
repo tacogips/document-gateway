@@ -68,6 +68,42 @@ import Testing
   #expect(!result.stdout.contains("new"))
 }
 
+@Test func docsLoginRejectsInvalidOpenBrowserValue() throws {
+  let profile = try GatewayCredentialProfile(id: "docs-writer", role: GatewayRole(service: .docs, accessMode: .write), clientID: "client", tokenStoreURL: URL(fileURLWithPath: "/tmp/docs-token.json"))
+  let runner = GatewayCommandRunner(role: profile.role, transport: InitialExchangeFixtureTransport(), credentialProfile: profile)
+  let result = runner.run(arguments: ["auth", "login", "--open-browser", "sometimes"])
+  #expect(result.exitCode == 2)
+  #expect(result.stdout.contains("--open-browser must be true or false"))
+}
+
+@Test func docsOAuthPresenterCanReportURLForManualOpening() throws {
+  let probe = AuthorizationPresenterProbe()
+  let presenter = GatewayAuthorizationPresenter(
+    browserOpener: { url in probe.recordOpened(url); return true },
+    manualReporter: { probe.recordReported($0) }
+  )
+  let url = try #require(URL(string: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test"))
+
+  try presenter.present(url, openBrowser: false)
+
+  #expect(probe.openedURL == nil)
+  #expect(probe.reportedURL == url)
+}
+
+@Test func docsOAuthPresenterOpensBrowserByDefault() throws {
+  let probe = AuthorizationPresenterProbe()
+  let presenter = GatewayAuthorizationPresenter(
+    browserOpener: { url in probe.recordOpened(url); return true },
+    manualReporter: { probe.recordReported($0) }
+  )
+  let url = try #require(URL(string: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test"))
+
+  try presenter.present(url, openBrowser: true)
+
+  #expect(probe.openedURL == url)
+  #expect(probe.reportedURL == nil)
+}
+
 @Test func docsInitialExchangeRequiresRefreshToken() throws {
   let role = GatewayRole(service: .docs, accessMode: .read)
   let profile = try GatewayCredentialProfile(id: "docs-reader", role: role, clientID: "client", tokenStoreURL: URL(fileURLWithPath: "/tmp/docs-token.json"))
@@ -86,5 +122,35 @@ private struct OAuthFixtureTransport: GatewayHTTPTransport {
 private struct InitialExchangeFixtureTransport: GatewayHTTPTransport {
   func send(url: URL, method: String, headers: [String: String], body: Data?) throws -> GatewayHTTPResponse {
     GatewayHTTPResponse(statusCode: 200, data: Data("{\"access_token\":\"new\",\"refresh_token\":\"refresh\",\"expires_in\":3600}".utf8), requestID: nil)
+  }
+}
+
+private final class AuthorizationPresenterProbe: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storedOpenedURL: URL?
+  private var storedReportedURL: URL?
+
+  var openedURL: URL? {
+    lock.lock()
+    defer { lock.unlock() }
+    return storedOpenedURL
+  }
+
+  var reportedURL: URL? {
+    lock.lock()
+    defer { lock.unlock() }
+    return storedReportedURL
+  }
+
+  func recordOpened(_ url: URL) {
+    lock.lock()
+    storedOpenedURL = url
+    lock.unlock()
+  }
+
+  func recordReported(_ url: URL) {
+    lock.lock()
+    storedReportedURL = url
+    lock.unlock()
   }
 }
